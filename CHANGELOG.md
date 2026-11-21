@@ -1,6 +1,6 @@
 # Revision history for effectful-streamly-http
 
-## 0.1.0.0 -- unreleased
+## 0.1.0.0 -- 2026-11-21
 
 * `Effectful.HTTP`: the `Http` effect and `fetch`; `runHttpClear` over
   streamly-http, within limits of time and size; `runHttpWith`, from a
