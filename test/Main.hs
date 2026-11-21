@@ -5,6 +5,8 @@ module Main (main) where
 import Control.Concurrent (threadDelay)
 import Control.Concurrent.Async (wait, withAsync)
 import Control.Exception (bracket)
+import Control.Monad (forever)
+import Data.IORef (atomicModifyIORef', newIORef, readIORef)
 import Data.ByteString (ByteString)
 import Data.ByteString qualified as BS
 import Effectful
@@ -73,6 +75,30 @@ tests =
           BS.takeWhile (/= 13) request @?= "GET /image?size=3 HTTP/1.1"
           BS.isInfixOf "\r\nAccept: image/jpeg\r\n" request @?= True
           fmap (\response -> (response.status, header "content-type" response, response.body)) outcome @?= Right (200, Just "image/jpeg", content)
+      , testCase "the requests of one interpreter to a server share a connection" $ do
+          connections <- newIORef (0 :: Int)
+          bracket (Net.socket Net.AF_INET Net.Stream Net.defaultProtocol) Net.close $ \listener -> do
+            Net.bind listener (Net.SockAddrInet 0 (Net.tupleToHostAddress (127, 0, 0, 1)))
+            Net.listen listener 5
+            port <- fromIntegral <$> Net.socketPort listener
+            let answerAll peer buffered = case BS.breakSubstring "\r\n\r\n" buffered of
+                  (found, rest) | not (BS.null rest) -> do
+                    let target = BS.takeWhile (/= 32) (BS.drop 4 found)
+                    NetBS.sendAll peer ("HTTP/1.1 200 OK\r\nContent-Length: " <> BS.pack (map (fromIntegral . fromEnum) (show (BS.length target))) <> "\r\n\r\n" <> target)
+                    answerAll peer (BS.drop 4 rest)
+                  _ -> do
+                    more <- NetBS.recv peer 4096
+                    if BS.null more then pure () else answerAll peer (buffered <> more)
+                serve = forever . bracket (fst <$> Net.accept listener) Net.close $ \peer ->
+                  atomicModifyIORef' connections (\count -> (count + 1, ())) >> answerAll peer ""
+            withAsync serve $ \_ -> do
+              outcome <- clear defaultLimits (mapM (\target -> (.body) <$> fetch Http (get "127.0.0.1" port target)) ["/a", "/b", "/c"])
+              outcome @?= Right ["/a", "/b", "/c"]
+              readIORef connections >>= (@?= 1)
+              -- Another interpreter has connections of its own.
+              again <- clear defaultLimits ((.body) <$> fetch Http (get "127.0.0.1" port "/d"))
+              again @?= Right "/d"
+              readIORef connections >>= (@?= 2)
       , testCase "a status is not a failure" $ do
           (_, outcome) <- withServer False ["HTTP/1.1 404 Not Found\r\nContent-Length: 4\r\n\r\ngone"] $ \port ->
             clear defaultLimits (fetch Http (get "127.0.0.1" port "/"))

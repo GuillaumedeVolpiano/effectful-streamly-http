@@ -24,8 +24,9 @@ main = do
 
 - `Http`, the effect, with one operation: `fetch`, for a request in clear
   (`Http`) or over TLS (`Https`).
-- `runHttpClear`: connections over plain TCP, one for each request, within
-  `Limits` of time and size. A request over TLS fails with
+- `runHttpClear`: connections over plain TCP, within `Limits` of time and
+  size, kept from one request to the next for each server as long as the
+  interpreter runs. A request over TLS fails with
   `TlsUnavailable`.
 - `runHttpWith`: the effect answered from a function. Code written against
   the effect is tested without any server.

@@ -58,18 +58,20 @@ import Effectful.Dispatch.Dynamic (interpret_, send)
 import Effectful.Error.Static (Error, throwError)
 import Streamly.External.ByteString qualified as StreamlyBS
 import Streamly.External.Network.HTTP
-  ( Header
+  ( Client
+  , Header
   , HttpError (..)
   , Limits (..)
   , Request (..)
   , RequestBody (..)
   , Response (..)
   , defaultLimits
-  , fetchWithin
+  , fetchFrom
   , get
   , header
   , noLimits
   , withBody
+  , withClient
   , withHeaders
   )
 import Streamly.External.Network.HTTP.URL (Scheme (..))
@@ -103,14 +105,21 @@ data HttpFailure
     TlsUnavailable
   deriving stock (Eq, Show)
 
--- | Interpret the effect over plain TCP connections, one for each
--- request, within limits of time and size. A request over TLS fails with
--- 'TlsUnavailable': see @effectful-streamly-http-tls@.
+-- | Interpret the effect over plain TCP connections, within limits of
+-- time and size. The connections are kept from one request to the next
+-- for each server, as long as the interpreter runs, and closed when it is
+-- done. A request over TLS fails with 'TlsUnavailable': see
+-- @effectful-streamly-http-tls@.
 runHttpClear :: (IOE :> es, Error HttpFailure :> es) => Limits -> Eff (Http : es) a -> Eff es a
-runHttpClear limits = interpret_ $ \case
+runHttpClear limits action =
+  withEffToIO SeqUnlift $ \runInIO ->
+    withClient limits (\client -> runInIO (throughClear client action))
+
+throughClear :: (IOE :> es, Error HttpFailure :> es) => Client -> Eff (Http : es) a -> Eff es a
+throughClear client = interpret_ $ \case
   Fetch Https _ -> throwError TlsUnavailable
   Fetch Http request ->
-    liftIO (try (try (fetchWithin limits request))) >>= \case
+    liftIO (try (try (fetchFrom client Http request))) >>= \case
       Left (problem :: IOException) -> throwError (ConnectFailed (Text.pack (displayException problem)))
       Right (Left (problem :: HttpError)) -> throwError (RequestFailed problem)
       Right (Right response) -> pure (StreamlyBS.fromArray <$> response)
