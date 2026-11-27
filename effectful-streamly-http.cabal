@@ -65,9 +65,9 @@ test-suite effectful-streamly-http-test
   ghc-options:    -threaded
   build-depends:
     , async                    ^>=2.2
-    , base                     >=4.19 && <4.22
-    , bytestring               ^>=0.12
-    , effectful-core           ^>=2.7.1
+    , base
+    , bytestring
+    , effectful-core
     , effectful-streamly-http
     , network                  ^>=3.2
     , tasty                    ^>=1.5
