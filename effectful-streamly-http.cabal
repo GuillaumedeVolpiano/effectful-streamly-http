@@ -1,6 +1,6 @@
 cabal-version:   3.12
 name:            effectful-streamly-http
-version:         0.1.0.2
+version:         0.1.0.3
 synopsis:        HTTP requests as an Effectful effect
 description:
   An HTTP effect for Effectful: send a request, get the whole response.
