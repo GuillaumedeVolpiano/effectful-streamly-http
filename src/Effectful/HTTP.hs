@@ -84,8 +84,8 @@ data Http :: Effect where
 
 type instance DispatchOf Http = Dynamic
 
--- | Send a request to the host and the port it names, in clear ('Http')
--- or over TLS ('Https'), and get the whole response. No redirect is
+-- | Send a request to the host and the port it names, in clear (@Http@)
+-- or over TLS (@Https@), and get the whole response. No redirect is
 -- followed.
 fetch :: Http :> es => Scheme -> Request -> Eff es (Response ByteString)
 fetch scheme request = send (Fetch scheme request)
