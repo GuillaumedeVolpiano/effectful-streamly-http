@@ -51,29 +51,19 @@ module Effectful.HTTP
 
 import Control.Exception (IOException, displayException, try)
 import Data.ByteString (ByteString)
-import Data.Text (Text)
-import Data.Text qualified as Text
-import Effectful
+import Data.Text (Text, pack)
+import Effectful (Dispatch (Dynamic), DispatchOf, Eff, Effect, IOE,
+                  MonadIO (liftIO), UnliftStrategy (SeqUnlift), withEffToIO,
+                  type (:>))
 import Effectful.Dispatch.Dynamic (interpret_, send)
 import Effectful.Error.Static (Error, throwError)
-import Streamly.External.ByteString qualified as StreamlyBS
-import Streamly.External.Network.HTTP
-  ( Client
-  , Header
-  , HttpError (..)
-  , Limits (..)
-  , Request (..)
-  , RequestBody (..)
-  , Response (..)
-  , defaultLimits
-  , fetchFrom
-  , get
-  , header
-  , noLimits
-  , withBody
-  , withClient
-  , withHeaders
-  )
+import Streamly.External.ByteString (fromArray)
+import Streamly.External.Network.HTTP (Client, Header, HttpError (..),
+                                       Limits (..), Request (..),
+                                       RequestBody (..), Response (..),
+                                       defaultLimits, fetchFrom, get, header,
+                                       noLimits, withBody, withClient,
+                                       withHeaders)
 import Streamly.External.Network.HTTP.URL (Scheme (..))
 
 -- | Exchanges with HTTP servers.
@@ -120,9 +110,9 @@ throughClear client = interpret_ $ \case
   Fetch Https _ -> throwError TlsUnavailable
   Fetch Http request ->
     liftIO (try (try (fetchFrom client Http request))) >>= \case
-      Left (problem :: IOException) -> throwError (ConnectFailed (Text.pack (displayException problem)))
+      Left (problem :: IOException) -> throwError (ConnectFailed (pack (displayException problem)))
       Right (Left (problem :: HttpError)) -> throwError (RequestFailed problem)
-      Right (Right response) -> pure (StreamlyBS.fromArray <$> response)
+      Right (Right response) -> pure (fromArray <$> response)
 
 -- | Interpret the effect with a function from a request to its response:
 -- for tests, and for other ways to reach a server.

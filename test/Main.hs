@@ -6,14 +6,25 @@ import Control.Concurrent (threadDelay)
 import Control.Concurrent.Async (wait, withAsync)
 import Control.Exception (bracket)
 import Control.Monad (forever)
+import Data.ByteString (ByteString, breakSubstring, isInfixOf, pack)
+import Data.ByteString qualified as BS (drop, length, null, takeWhile)
 import Data.IORef (atomicModifyIORef', newIORef, readIORef)
-import Data.ByteString (ByteString)
-import Data.ByteString qualified as BS
-import Effectful
+import Effectful (Eff, IOE, runEff)
 import Effectful.Error.Static (Error, runErrorNoCallStack)
-import Effectful.HTTP
-import Network.Socket qualified as Net
-import Network.Socket.ByteString qualified as NetBS
+import Effectful.HTTP (Http,
+                       HttpError (BodyTooLarge, InvalidRequest, MalformedResponse, ResponseTimedOut),
+                       HttpFailure (ConnectFailed, RequestFailed, TlsUnavailable),
+                       Limits (idleTimeout, maxBodySize),
+                       Request (method, target), RequestBody (BodyBytes),
+                       Response (Response, body, headers, reason, status),
+                       Scheme (Http, Https), defaultLimits, fetch, get, header,
+                       runHttpClear, runHttpWith, withBody, withHeaders)
+import Network.Socket (Family (AF_INET), SockAddr (SockAddrInet),
+                       SocketOption (ReuseAddr), SocketType (Stream), accept,
+                       bind, close, defaultProtocol, listen, setSocketOption,
+                       socketPort, tupleToHostAddress)
+import Network.Socket qualified as N (socket)
+import Network.Socket.ByteString (recv, sendAll)
 import Test.Tasty (TestTree, defaultMain, localOption, mkTimeout, testGroup)
 import Test.Tasty.HUnit (assertFailure, testCase, (@?=))
 
@@ -25,29 +36,29 @@ main = defaultMain tests
 -- Returns the request with the result.
 withServer :: Bool -> [ByteString] -> (Int -> IO a) -> IO (ByteString, a)
 withServer hold answer action =
-  bracket open Net.close $ \listener -> do
-    port <- Net.socketPort listener
+  bracket open close $ \listener -> do
+    port <- socketPort listener
     withAsync (serve listener) $ \server -> do
       result <- action (fromIntegral port)
       request <- if hold then pure "" else wait server
       pure (request, result)
   where
     open = do
-      listener <- Net.socket Net.AF_INET Net.Stream Net.defaultProtocol
-      Net.setSocketOption listener Net.ReuseAddr 1
-      Net.bind listener (Net.SockAddrInet 0 (Net.tupleToHostAddress (127, 0, 0, 1)))
-      Net.listen listener 1
+      listener <- N.socket AF_INET Stream defaultProtocol
+      setSocketOption listener ReuseAddr 1
+      bind listener (SockAddrInet 0 (tupleToHostAddress (127, 0, 0, 1)))
+      listen listener 1
       pure listener
     serve listener =
-      bracket (fst <$> Net.accept listener) Net.close $ \peer -> do
+      bracket (fst <$> accept listener) close $ \peer -> do
         request <- readHead peer ""
-        mapM_ (NetBS.sendAll peer) answer
+        mapM_ (sendAll peer) answer
         if hold then threadDelay 10_000_000 else pure ()
         pure request
     readHead peer seen
-      | "\r\n\r\n" `BS.isInfixOf` seen = pure seen
+      | "\r\n\r\n" `isInfixOf` seen = pure seen
       | otherwise = do
-          more <- NetBS.recv peer 4096
+          more <- recv peer 4096
           if BS.null more then pure seen else readHead peer (seen <> more)
 
 clear :: Limits -> Eff '[Http, Error HttpFailure, IOE] a -> IO (Either HttpFailure a)
@@ -68,28 +79,28 @@ tests =
           (first.body, header "x-scheme" first) @?= ("GET /a", Just "http")
           (second.body, header "x-scheme" second) @?= ("POST /b", Just "https")
       , testCase "a request in clear goes over TCP, and its response comes back whole" $ do
-          let content = BS.pack (take 100_000 (cycle [0 .. 255]))
+          let content = pack (take 100_000 (cycle [0 .. 255]))
               answer = ["HTTP/1.1 200 OK\r\nContent-Type: image/jpeg\r\nTransfer-Encoding: chunked\r\n\r\n186a0\r\n", content, "\r\n0\r\n\r\n"]
           (request, outcome) <- withServer False answer $ \port ->
             clear defaultLimits (fetch Http (withHeaders [("Accept", "image/jpeg")] (get "127.0.0.1" port "/image?size=3")))
           BS.takeWhile (/= 13) request @?= "GET /image?size=3 HTTP/1.1"
-          BS.isInfixOf "\r\nAccept: image/jpeg\r\n" request @?= True
+          isInfixOf "\r\nAccept: image/jpeg\r\n" request @?= True
           fmap (\response -> (response.status, header "content-type" response, response.body)) outcome @?= Right (200, Just "image/jpeg", content)
       , testCase "the requests of one interpreter to a server share a connection" $ do
           connections <- newIORef (0 :: Int)
-          bracket (Net.socket Net.AF_INET Net.Stream Net.defaultProtocol) Net.close $ \listener -> do
-            Net.bind listener (Net.SockAddrInet 0 (Net.tupleToHostAddress (127, 0, 0, 1)))
-            Net.listen listener 5
-            port <- fromIntegral <$> Net.socketPort listener
-            let answerAll peer buffered = case BS.breakSubstring "\r\n\r\n" buffered of
+          bracket (N.socket AF_INET Stream defaultProtocol) close $ \listener -> do
+            bind listener (SockAddrInet 0 (tupleToHostAddress (127, 0, 0, 1)))
+            listen listener 5
+            port <- fromIntegral <$> socketPort listener
+            let answerAll peer buffered = case breakSubstring "\r\n\r\n" buffered of
                   (found, rest) | not (BS.null rest) -> do
                     let target = BS.takeWhile (/= 32) (BS.drop 4 found)
-                    NetBS.sendAll peer ("HTTP/1.1 200 OK\r\nContent-Length: " <> BS.pack (map (fromIntegral . fromEnum) (show (BS.length target))) <> "\r\n\r\n" <> target)
+                    sendAll peer ("HTTP/1.1 200 OK\r\nContent-Length: " <> pack (map (fromIntegral . fromEnum) (show (BS.length target))) <> "\r\n\r\n" <> target)
                     answerAll peer (BS.drop 4 rest)
                   _ -> do
-                    more <- NetBS.recv peer 4096
+                    more <- recv peer 4096
                     if BS.null more then pure () else answerAll peer (buffered <> more)
-                serve = forever . bracket (fst <$> Net.accept listener) Net.close $ \peer ->
+                serve = forever . bracket (fst <$> accept listener) close $ \peer ->
                   atomicModifyIORef' connections (\count -> (count + 1, ())) >> answerAll peer ""
             withAsync serve $ \_ -> do
               outcome <- clear defaultLimits (mapM (\target -> (.body) <$> fetch Http (get "127.0.0.1" port target)) ["/a", "/b", "/c"])
@@ -121,9 +132,9 @@ tests =
             Left (RequestFailed (MalformedResponse _)) -> pure ()
             other -> assertFailure ("expected MalformedResponse, got " <> show (fmap (.status) other))
       , testCase "a refused connection is reported" $ do
-          port <- bracket (Net.socket Net.AF_INET Net.Stream Net.defaultProtocol) Net.close $ \socket -> do
-            Net.bind socket (Net.SockAddrInet 0 (Net.tupleToHostAddress (127, 0, 0, 1)))
-            fromIntegral <$> Net.socketPort socket
+          port <- bracket (N.socket AF_INET Stream defaultProtocol) close $ \socket -> do
+            bind socket (SockAddrInet 0 (tupleToHostAddress (127, 0, 0, 1)))
+            fromIntegral <$> socketPort socket
           outcome <- clear defaultLimits (fetch Http (get "127.0.0.1" port "/"))
           case outcome of
             Left (ConnectFailed _) -> pure ()
