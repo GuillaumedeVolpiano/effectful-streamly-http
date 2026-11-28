@@ -8,9 +8,12 @@
 -- @http@; the one of @effectful-streamly-http-tls@ for @https@ too; or
 -- 'runHttpWith', which answers from a function, for tests.
 --
--- > import Effectful
+-- > {-# LANGUAGE OverloadedRecordDot #-}
+-- > {-# LANGUAGE OverloadedStrings #-}
+-- > import Effectful (runEff)
 -- > import Effectful.Error.Static (runErrorNoCallStack)
--- > import Effectful.HTTP
+-- > import Effectful.HTTP (HttpFailure, Response (..), Scheme (Http), defaultLimits,
+-- >                        fetch, get, runHttpClear)
 -- >
 -- > main :: IO ()
 -- > main = do

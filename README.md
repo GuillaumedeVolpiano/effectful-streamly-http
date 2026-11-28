@@ -3,15 +3,19 @@
 HTTP requests as an [Effectful](https://hackage.haskell.org/package/effectful)
 effect: send a request, get the whole response. The interpreter of this
 package runs over
-[streamly-http](https://github.com/GuillaumedeVolpiano/streamly-http), in
+[streamly-http](https://hackage.haskell.org/package/streamly-http), in
 clear;
 [effectful-streamly-http-tls](https://github.com/GuillaumedeVolpiano/effectful-streamly-http-tls)
 adds `https`.
 
 ```haskell
-import Effectful
+{-# LANGUAGE OverloadedRecordDot #-}
+{-# LANGUAGE OverloadedStrings #-}
+
+import Effectful (runEff)
 import Effectful.Error.Static (runErrorNoCallStack)
-import Effectful.HTTP
+import Effectful.HTTP (HttpFailure, Response (..), Scheme (Http), defaultLimits,
+                       fetch, get, runHttpClear)
 
 main :: IO ()
 main = do
@@ -41,8 +45,8 @@ main = do
 
 ## Building
 
-streamly-http is not on Hackage yet: `cabal.project` fetches it from
-GitHub, at its release. To build against a copy checked out next to this
-repository instead, pass `--project-file=cabal.project.siblings`.
+To build against a copy of
+[streamly-http](https://hackage.haskell.org/package/streamly-http) checked
+out next to this repository, pass `--project-file=cabal.project.siblings`.
 
-Tested with GHC 9.12.4 and effectful 2.7.1.
+Tested with GHC 9.8.4, 9.10.3 and 9.12.4, and effectful 2.7.1.
